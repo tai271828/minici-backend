@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 from argparse import ArgumentParser
+from datetime import datetime
 from dateutil import parser as DateParser
-#from datetime import datetime
-#from dateutil.relativedelta import relativedelta
+from dateutil.relativedelta import relativedelta
+import ipdb
 
 import json
 import logging
@@ -87,39 +88,42 @@ class MiniCIReport(object):
 
     def generate_json(self, **kwargs):
         """
-        generate data for mini-ci-frontend index.html
+        generate data of one unit for mini-ci-frontend index.html
         """
-        # database: release-fromfactor-canonical_id.minici.dat
-        #
-        # 110474
-        # 110329
-        # 110249
-        # 110204
-        #
-        # TODO: How do I know these info?
-        # reported by the client and in the database?
-        # no I want it in C3
-        release = "12.04.5"
-        formfactor = "desktop"
-        cid = "201302-12843"
+        cid = kwargs['canonical_id']
+        release = kwargs['release']
+        formfactor = kwargs['form_factor']
+        from_date = kwargs['from_date']
         self.release = release
         self.formfactor = formfactor
         self.canonical_id = cid
-        summary_report = {"records" : []}
-        database = open(release + "-" + formfactor + "-" + cid + ".minici.dat","r")
-        for row in csv.DictReader(database):
-            summary = Summary(release=release, formfactor=formfactor, canonical_id=cid)
-            submission_id = row['submission_id']
-            checkbox_log_url = row['checkbox_log_url']
-            summary.submission_id = submission_id
-            summary.checkbox_log_url = checkbox_log_url
-            (summary.passed, summary.skipped, summary.failed, summary.total, summary.date) = self.get_status_number_date_by_submission_id(submission_id)
-            summary_report["records"].append(summary.get_fields())
+
+        data = self.c3api.retrieve_machinereports(cid, release, from_date)
+        print(data)
+        #ipdb.set_trace()
+
+        records_list = []
+        for entry in data['objects']:
+            entry_data = {}
+            entry_data['passed'] = entry['passed_test_count']
+            entry_data['skipped'] = entry['skipped_test_count']
+            entry_data['failed'] = entry['failed_test_count']
+            entry_data['total'] = entry['test_count']
+            entry_data['date'] = entry['created_at']
+            entry_data['release'] = entry['release']
+            entry_data['formfactor'] = entry['form_factor']
+            entry_data['canonical_id'] = entry['canonical_id']
+            entry_data['submission_id'] = entry['id']
+            # TODO: add source to fetch the URL of its pastebin
+            entry_data['pastebin'] = 'NA'
+            records_list.append(entry_data)
+
+        #TODO: remove the entry on the same day. only get the latest one.
+
+        summary_report = {"records" : records_list}
 
         summary_report_json = json.dumps(summary_report)
         self.write_report(summary_report_json)
-
-
 
 
 def main():
@@ -143,12 +147,7 @@ def main():
     parser.add_argument('--batch_limit', type=int, default=1,
                         help="Number of element in a batch result."
                              " 0 for as many as possible")
-
-    # Date args
-    date_args = parser.add_argument_group('Date Options',
-        ('Set a date range to retrieve objects.'))
-    start_args = date_args.add_mutually_exclusive_group()
-    start_args.add_argument('--start', dest='from_date', action='store',
+    parser.add_argument('--start', dest='from_date', action='store',
         default=(datetime.now().date() - relativedelta(days=10)).isoformat(),
         help=("The start date for the report in ISO format (YYYY-MM-DD). "
               "By default, objects created after midnight on the start date "
@@ -158,22 +157,14 @@ def main():
               "objects created AFTER 1:30PM on April 1 2014. If not used, the "
               "default is ONE day ago: %(default)s. NOTE, this cannot be used "
               "with --oneweek or --onemonth"))
-    start_args.add_argument('--oneweek', action='store_true',
-        default=False,
-        help=("Convenience option. Choosing this will retrieve objects "
-              "created in the week before end_date. NOTE, this cannot be used "
-              "with --start"))
-    start_args.add_argument('--onemonth', action='store_true',
-        default=False,
-        help=("Same as --oneweek, but retrieves objects created in the month "
-              "before end_date.  NOTE, this cannot be used with --start"))
 
     args = parser.parse_args()
     minici_report = MiniCIReport(args.username, args.api_key, args.batch_limit)
     c3_find_filter = {"canonical_id": args.canonical_id,
                       "release": args.release,
-                      "form_factor": args.form_factor}
-    minici_report.generate_json(c3_find_filter)
+                      "form_factor": args.form_factor,
+                      "from_date": args.from_date}
+    minici_report.generate_json(**c3_find_filter)
 
 if __name__ == "__main__":
     sys.exit(main())
